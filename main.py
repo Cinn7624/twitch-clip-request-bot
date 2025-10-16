@@ -1,3 +1,4 @@
+
 from fastapi import FastAPI, Request
 import httpx
 import os
@@ -8,14 +9,16 @@ load_dotenv()
 
 app = FastAPI()
 
+# Get the Discord webhook URL from your environment variables
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
-
-@app.get("/")
-async def root():
-    return {"message": "Twitch Clip Request Bot is alive!"}
 
 @app.api_route("/twitch-command", methods=["GET", "POST"])
 async def twitch_command(request: Request):
+    """
+    Handles both GET and POST requests from Nightbot or other Twitch chat bots.
+    Sends a simplified clip request message to Discord and returns a clean response to Nightbot.
+    """
+
     if request.method == "POST":
         data = await request.json()
         command = data.get("command")
@@ -26,15 +29,19 @@ async def twitch_command(request: Request):
         user = request.query_params.get("user")
         message = request.query_params.get("message", "")
 
+    # Validate incoming data
     if not command or not user:
         return {"error": "Missing required fields"}
 
-    # Format message for Discord
-    discord_message = f"🎬 **{user}** requested a clip! Message: {message}"
+    # Build Discord message
+    if message:
+        discord_message = f"🎬 Clip requested by **{user}** — {message}"
+    else:
+        discord_message = f"🎬 Clip requested by **{user}**!"
 
-    # Send to Discord webhook
-    if DISCORD_WEBHOOK_URL:
-        async with httpx.AsyncClient() as client:
-            await client.post(DISCORD_WEBHOOK_URL, json={"content": discord_message})
+    # Send message to Discord
+    async with httpx.AsyncClient() as client:
+        await client.post(DISCORD_WEBHOOK_URL, json={"content": discord_message})
 
-    return {"status": "✅ Clip request sent to Discord!"}
+    # ✅ Clean Nightbot response
+    return "🎬 Clip request sent!"
