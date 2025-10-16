@@ -8,6 +8,16 @@ load_dotenv()
 
 app = FastAPI()
 
+@app.get("/debug-env")
+async def debug_env():
+    import os
+    return {
+        "TWITCH_CLIENT_ID": os.getenv("TWITCH_CLIENT_ID"),
+        "TWITCH_ACCESS_TOKEN": bool(os.getenv("TWITCH_ACCESS_TOKEN")),  # don't show actual token
+        "DISCORD_WEBHOOK_URL": bool(os.getenv("DISCORD_WEBHOOK_URL"))
+    }
+
+
 # Environment variables
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
