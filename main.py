@@ -12,19 +12,46 @@ app = FastAPI()
 DISCORD_WEBHOOK_URL = os.getenv("DISCORD_WEBHOOK_URL")
 TWITCH_CLIENT_ID = os.getenv("TWITCH_CLIENT_ID")
 TWITCH_ACCESS_TOKEN = os.getenv("TWITCH_ACCESS_TOKEN")
-BROADCASTER_ID = os.getenv("BROADCASTER_ID")  # Streamer’s user ID
+TWITCH_REFRESH_TOKEN = os.getenv("TWITCH_REFRESH_TOKEN")
+TWITCH_CLIENT_SECRET = os.getenv("TWITCH_CLIENT_SECRET")
+BROADCASTER_ID = os.getenv("BROADCASTER_ID")
 
 
-# ---------- Function to create a clip ----------
-async def create_clip(request_user: str) -> tuple[str, str]:
-    """
-    Create a Twitch clip.
-    Returns: (discord_message, nightbot_message)
-    """
+# ---------- Refresh Twitch Token ----------
+async def refresh_twitch_token() -> str | None:
+    """Refresh the Twitch access token using the refresh token."""
+    url = "https://id.twitch.tv/oauth2/token"
+    params = {
+        "grant_type": "refresh_token",
+        "refresh_token": TWITCH_REFRESH_TOKEN,
+        "client_id": TWITCH_CLIENT_ID,
+        "client_secret": TWITCH_CLIENT_SECRET,
+    }
+
+    async with httpx.AsyncClient() as client:
+        response = await client.post(url, data=params)
+
+    if response.status_code == 200:
+        data = response.json()
+        new_token = data["access_token"]
+
+        # Save to environment for next requests
+        os.environ["TWITCH_ACCESS_TOKEN"] = new_token
+
+        print("🔄 Twitch token refreshed successfully.")
+        return new_token
+    else:
+        print(f"⚠️ Token refresh failed: {response.status_code} - {response.text}")
+        return None
+
+
+# ---------- Create a Twitch Clip ----------
+async def create_clip(request_user: str, retry: bool = True) -> tuple[str, str]:
+    """Create a Twitch clip, retry once if token expired."""
     url = "https://api.twitch.tv/helix/clips"
     headers = {
         "Client-ID": TWITCH_CLIENT_ID,
-        "Authorization": f"Bearer {TWITCH_ACCESS_TOKEN}",
+        "Authorization": f"Bearer {os.getenv('TWITCH_ACCESS_TOKEN')}",
         "Content-Type": "application/json",
     }
     payload = {"broadcaster_id": BROADCASTER_ID}
@@ -34,7 +61,6 @@ async def create_clip(request_user: str) -> tuple[str, str]:
 
     print(f"🎥 Clip creation response {response.status_code}: {response.text}")
 
-    # ----- Success -----
     if response.status_code == 202:
         data = response.json()
         clip_id = data["data"][0]["id"]
@@ -44,23 +70,26 @@ async def create_clip(request_user: str) -> tuple[str, str]:
             f"🎬 {request_user}, your clip has been created! {clip_url}",
         )
 
-    # ----- Unauthorized -----
-    elif response.status_code == 401:
-        msg = "⚠️ Failed to create clip: Unauthorized (check Twitch token)."
-        return (msg, msg)
+    elif response.status_code == 401 and retry:
+        # Try to refresh and retry once
+        print("🔄 Access token expired — attempting to refresh.")
+        new_token = await refresh_twitch_token()
+        if new_token:
+            return await create_clip(request_user, retry=False)
+        else:
+            msg = "⚠️ Twitch token refresh failed. Please reauthorize the app."
+            return (msg, msg)
 
-    # ----- Stream offline -----
     elif response.status_code == 404:
         msg = "⚠️ Clipping is not possible — the stream is currently offline."
         return (msg, msg)
 
-    # ----- Other errors -----
     else:
         msg = f"⚠️ Could not create a clip (status {response.status_code})."
         return (msg, msg)
 
 
-# ---------- Main route ----------
+# ---------- Main Route ----------
 @app.api_route("/twitch-command", methods=["GET", "POST"])
 async def twitch_command(request: Request):
     if request.method == "POST":
@@ -76,18 +105,13 @@ async def twitch_command(request: Request):
     if not command or not user:
         return {"error": "Missing required fields"}
 
-    # Handle !clip command
     if command.lower() == "!clip":
         discord_message, nightbot_message = await create_clip(user)
     else:
         discord_message = f"🎥 **{user}** used `{command}`: {message}"
         nightbot_message = f"✅ {user}, your command `{command}` was processed!"
 
-    # Send message to Discord
     async with httpx.AsyncClient() as client:
         await client.post(DISCORD_WEBHOOK_URL, json={"content": discord_message})
 
-    # Return a clean message for Nightbot
     return nightbot_message
-
-
